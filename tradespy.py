@@ -56,24 +56,27 @@ def analyze_stock(ticker):
         df = get_data(ticker, period)
         if df.empty:
             return {"Ticker": ticker, "Price": "-", "Trend": "-", "Volatility": "-", 
-                    "Volume": "-", "Flow": "-", "Summary": "No data"}
+                    "Volume": "-", "Flow": "-", "Signal": "🟠", "Summary": "No data"}
 
         # --- Avg Volume ---
         avg_vol = float(df["Volume"].mean())
         volume_pass = avg_vol > min_volume
 
-        # --- Trend Slope ---
-        slope_pass = False
-        if len(df["Close"]) >= 20:  # shorter lookback for faster response
-            recent = df["Close"].tail(20).to_numpy()
-            x = np.arange(len(recent))
-            slope = np.polyfit(x, recent, 1)[0]
-            slope_pass = slope > 0
+        # --- Multi-timeframe Trend ---
+        slope_short = slope_long = 0
+        slope_pass_short = slope_pass_long = False
+        if len(df["Close"]) >= 20:
+            x_short = np.arange(20)
+            slope_short = np.polyfit(x_short, df["Close"].tail(20).to_numpy(), 1)[0]
+            slope_pass_short = slope_short > 0
+        if len(df["Close"]) >= 60:
+            x_long = np.arange(60)
+            slope_long = np.polyfit(x_long, df["Close"].tail(60).to_numpy(), 1)[0]
+            slope_pass_long = slope_long > 0
 
         # --- Volatility ---
         if ticker.endswith("=F"):
-            recent_close = df["Close"].tail(14).to_numpy()
-            atr = recent_close.max() - recent_close.min()
+            atr = df["Close"].tail(14).to_numpy().ptp()  # ATR proxy
             vol_pass = atr > 0
         else:
             rv30 = df["Close"].pct_change().rolling(30).std() * np.sqrt(252)
@@ -82,7 +85,7 @@ def analyze_stock(ticker):
             iv_last = iv30.dropna().to_numpy()[-1] if not iv30.dropna().empty else np.nan
             vol_pass = False
             if not np.isnan(rv_last) and rv_last != 0 and not np.isnan(iv_last):
-                vol_pass = (iv_last / rv_last) > 0.8  # more sensitive
+                vol_pass = (iv_last / rv_last) > 0.8
 
         # --- Volume spike ---
         vol_ma = df["Volume"].rolling(20).mean().to_numpy()[-1]
@@ -91,31 +94,36 @@ def analyze_stock(ticker):
         # --- Options flow ---
         cp_ratio, flow_bias = get_cp_ratio(ticker)
 
-        # --- Nuanced Summary ---
-        if slope_pass and vol_pass and volume_pass:
+        # --- Nuanced Summary & Signal ---
+        summary = "Sideways / uncertain"
+        signal = "🟠"
+        if slope_pass_short and slope_pass_long and vol_pass and volume_pass:
             summary = "🔥 Strong Up Move Potential" if flow_bias=="Bullish" else "Uptrend Candidate"
-        elif slope_pass and (vol_pass or volume_pass):
+            signal = "🟢"
+        elif slope_pass_short and vol_pass:
             summary = "Moderate Uptrend"
-        elif not slope_pass and vol_pass and volume_pass:
-            summary = "⚠️ Downside Pressure" if flow_bias=="Bearish" else "Downtrend Candidate"
-        elif not slope_pass and (vol_pass or volume_pass):
+            signal = "🟢"
+        elif not slope_pass_short and slope_pass_long and vol_pass:
             summary = "Moderate Downtrend"
-        else:
-            summary = "Sideways / uncertain"
+            signal = "🔴"
+        elif not slope_pass_short and not slope_pass_long and vol_pass:
+            summary = "⚠️ Downside Pressure" if flow_bias=="Bearish" else "Downtrend Candidate"
+            signal = "🔴"
 
         return {
             "Ticker": ticker,
             "Price": round(float(df["Close"].to_numpy()[-1]),2),
-            "Trend": "Uptrend" if slope_pass else "Downtrend",
+            "Trend": "Uptrend" if slope_pass_short else "Downtrend",
             "Volatility": "High" if vol_pass else "Low",
             "Volume": vol_signal,
             "Flow": flow_bias,
+            "Signal": signal,
             "Summary": summary
         }
 
     except Exception as e:
         return {"Ticker": ticker, "Price": "-", "Trend": "❌ Error", "Volatility": "❌ Error",
-                "Volume": "❌ Error", "Flow": "❌ Error", "Summary": f"Error: {e}"}
+                "Volume": "❌ Error", "Flow": "❌ Error", "Signal": "❌", "Summary": f"Error: {e}"}
 
 # --- Run Scanner ---
 if st.button("🔍 Run Scanner"):
@@ -130,7 +138,18 @@ if st.button("🔍 Run Scanner"):
 if "last_scan" in st.session_state:
     df = st.session_state["last_scan"]
     st.subheader("📊 Scan Results")
-    st.dataframe(df, width="stretch")
+    # Display table with colored signals
+    def color_signal_html(signal):
+        if signal == "🟢":
+            return "<span style='color:green;'>🟢</span>"
+        elif signal == "🔴":
+            return "<span style='color:red;'>🔴</span>"
+        else:
+            return "<span style='color:orange;'>🟠</span>"
+
+    df_display = df.copy()
+    df_display["Signal"] = df_display["Signal"].apply(color_signal_html)
+    st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
 
     # --- Chart Dropdown ---
     if show_chart:
@@ -141,3 +160,5 @@ if "last_scan" in st.session_state:
                 st.line_chart(chart_df["Close"])
             else:
                 st.warning("No chart data for this ticker.")
+
+st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Stocks + Futures ready | Signal Buttons included")
