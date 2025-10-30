@@ -70,41 +70,44 @@ def analyze_ticker(ticker):
         tk = yf.Ticker(ticker)
         info = tk.info
 
-        # Latest price and % change
+        # Latest price and % change safely
         latest_price = info.get("postMarketPrice") or info.get("preMarketPrice") or info.get("regularMarketPrice")
         prev_close = info.get("previousClose")
-        pct_change = (latest_price - prev_close) / prev_close * 100 if latest_price and prev_close else 0
+        pct_change = float((latest_price - prev_close) / prev_close * 100) if latest_price and prev_close else 0.0
 
         # Average volume
-        avg_volume = float(data["Volume"].mean()) if not data.empty else 0
+        avg_volume = float(data["Volume"].mean()) if not data.empty else 0.0
         volume_pass = avg_volume >= min_volume
 
-        # Trend slope
+        # Trend slope (last 45 bars)
         slope_pass = False
-        slope = np.nan
-        lookback_bars = 45
-        if len(data["Close"]) >= lookback_bars:
-            recent_close = data["Close"].tail(lookback_bars).values
+        slope_val = np.nan
+        if len(data["Close"]) >= 45:
+            recent_close = data["Close"].tail(45).values
             x = np.arange(len(recent_close))
-            slope = float(np.polyfit(x, recent_close, 1)[0])
-            slope_pass = slope > 0
+            slope_val = float(np.polyfit(x, recent_close, 1)[0])
+            slope_pass = slope_val > 0
 
         # MACD & RSI
         macd, macd_signal, macd_hist = compute_macd(data)
         rsi = compute_rsi(data)
 
-        # MACD signal
-        macd_status = "Bullish" if macd_hist.iloc[-1] > 0 else "Bearish"
+        # MACD scalar
+        macd_val = float(macd_hist.dropna().iloc[-1]) if not macd_hist.dropna().empty else np.nan
+        macd_status = "Bullish" if macd_val > 0 else "Bearish"
 
-        # RSI signal
-        if rsi.iloc[-1] > 70:
+        # RSI scalar
+        rsi_val = float(rsi.dropna().iloc[-1]) if not rsi.dropna().empty else np.nan
+        if np.isnan(rsi_val):
+            rsi_status = "-"
+        elif rsi_val > 70:
             rsi_status = "Overbought"
-        elif rsi.iloc[-1] < 30:
+        elif rsi_val < 30:
             rsi_status = "Oversold"
         else:
             rsi_status = "Neutral"
 
-        # Signal and recommendation
+        # Signal & summary
         if pct_change >= pct_threshold:
             signal = "🟢 Bullish"
             summary = "Uptrend detected after hours / pre-market"
@@ -115,7 +118,7 @@ def analyze_ticker(ticker):
             if slope_pass:
                 signal = "🟢 Bullish"
                 summary = "Uptrend based on historical momentum"
-            elif not slope_pass and not np.isnan(slope):
+            elif not slope_pass and not np.isnan(slope_val):
                 signal = "🔴 Bearish"
                 summary = "Downtrend based on historical momentum"
             else:
@@ -135,7 +138,7 @@ def analyze_ticker(ticker):
         return {
             "Ticker": ticker,
             "Latest Price": latest_price or "-",
-            "Trend Slope": round(slope, 2) if not np.isnan(slope) else "-",
+            "Trend Slope": round(slope_val, 2) if not np.isnan(slope_val) else "-",
             "Volume Check": pf(volume_pass),
             "After-hours %": round(pct_change, 2),
             "MACD": macd_status,
@@ -178,7 +181,7 @@ if st.button("🔍 Run Scanner"):
                     macd, macd_signal, macd_hist = compute_macd(chart_data)
 
                     fig = go.Figure()
-                    # Price candles / line
+                    # Price candles
                     fig.add_trace(go.Candlestick(
                         x=chart_data.index,
                         open=chart_data['Open'],
@@ -188,21 +191,23 @@ if st.button("🔍 Run Scanner"):
                         name='Price'
                     ))
                     # RSI line
-                    fig.add_trace(go.Scatter(
-                        x=chart_data.index,
-                        y=rsi,
-                        line=dict(color='orange', width=2),
-                        name='RSI',
-                        yaxis='y2'
-                    ))
+                    if not rsi.dropna().empty:
+                        fig.add_trace(go.Scatter(
+                            x=chart_data.index,
+                            y=rsi,
+                            line=dict(color='orange', width=2),
+                            name='RSI',
+                            yaxis='y2'
+                        ))
                     # MACD histogram
-                    fig.add_trace(go.Bar(
-                        x=chart_data.index,
-                        y=macd_hist,
-                        marker_color='blue',
-                        name='MACD Hist',
-                        yaxis='y3'
-                    ))
+                    if not macd_hist.dropna().empty:
+                        fig.add_trace(go.Bar(
+                            x=chart_data.index,
+                            y=macd_hist,
+                            marker_color='blue',
+                            name='MACD Hist',
+                            yaxis='y3'
+                        ))
 
                     fig.update_layout(
                         yaxis2=dict(
