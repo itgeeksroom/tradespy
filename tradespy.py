@@ -5,37 +5,27 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # --- Streamlit Setup ---
-st.set_page_config(page_title="📊 Multi-Timeframe Stock & Futures Scanner", layout="centered")
+st.set_page_config(page_title="📊 Multi-Timeframe Stock & Futures Scanner", layout="wide")
 st.title("📊 US Stock & Futures Trend & Signal Scanner")
 
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
-
 tickers_input = st.sidebar.text_input(
     "Enter stock/futures symbols (comma separated):",
     "TSLA, AAPL, NVDA, ES=F, NQ=F"
 )
-
 timeframe = st.sidebar.selectbox(
     "Select Timeframe:",
     ["1m", "5m", "15m", "1h", "4h", "1d"], index=5
 )
+min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
+show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
+pct_threshold = st.sidebar.number_input("After-hours % change threshold", value=1.0, step=0.1)
 
-period_map = {
-    "1m": "7d",
-    "5m": "60d",
-    "15m": "60d",
-    "1h": "180d",
-    "4h": "2y",
-    "1d": "2y"
-}
+# --- Period mapping for yfinance ---
+period_map = {"1m": "7d", "5m": "60d", "15m": "60d", "1h": "180d", "4h": "2y", "1d": "2y"}
 period = period_map[timeframe]
 
-min_volume = st.sidebar.number_input("Minimum Avg Volume (for stocks)", value=2_000_000, step=500_000)
-show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
-pct_threshold = st.sidebar.number_input("After-hours / pre-market % change threshold", value=1.0, step=0.1)
-
-# --- Parse tickers ---
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
 # --- Cached data fetch ---
@@ -63,23 +53,25 @@ def compute_macd(data):
     hist = macd - signal
     return macd, signal, hist
 
-# --- Analysis Function ---
+# --- Analyze Function ---
 def analyze_ticker(ticker):
     try:
         data = get_data(ticker, period, timeframe)
         tk = yf.Ticker(ticker)
         info = tk.info
 
-        # Latest price and % change safely
         latest_price = info.get("postMarketPrice") or info.get("preMarketPrice") or info.get("regularMarketPrice")
         prev_close = info.get("previousClose")
         pct_change = float((latest_price - prev_close) / prev_close * 100) if latest_price and prev_close else 0.0
 
-        # Average volume
+        # --- Volume check (different for futures) ---
         avg_volume = float(data["Volume"].mean()) if not data.empty else 0.0
-        volume_pass = avg_volume >= min_volume
+        if "=F" in ticker:
+            volume_pass = avg_volume >= 1000
+        else:
+            volume_pass = avg_volume >= min_volume
 
-        # Trend slope (last 45 bars)
+        # --- Trend slope ---
         slope_pass = False
         slope_val = np.nan
         if len(data["Close"]) >= 45:
@@ -88,15 +80,11 @@ def analyze_ticker(ticker):
             slope_val = float(np.polyfit(x, recent_close, 1)[0])
             slope_pass = slope_val > 0
 
-        # MACD & RSI
+        # --- MACD & RSI ---
         macd, macd_signal, macd_hist = compute_macd(data)
         rsi = compute_rsi(data)
-
-        # MACD scalar
         macd_val = float(macd_hist.dropna().iloc[-1]) if not macd_hist.dropna().empty else np.nan
         macd_status = "Bullish" if macd_val > 0 else "Bearish"
-
-        # RSI scalar
         rsi_val = float(rsi.dropna().iloc[-1]) if not rsi.dropna().empty else np.nan
         if np.isnan(rsi_val):
             rsi_status = "-"
@@ -107,7 +95,7 @@ def analyze_ticker(ticker):
         else:
             rsi_status = "Neutral"
 
-        # Signal & summary
+        # --- Signal & Summary ---
         if pct_change >= pct_threshold:
             signal = "🟢 Bullish"
             summary = "Uptrend detected after hours / pre-market"
@@ -137,9 +125,9 @@ def analyze_ticker(ticker):
 
         return {
             "Ticker": ticker,
-            "Latest Price": latest_price or "-",
-            "Trend Slope": round(slope_val, 2) if not np.isnan(slope_val) else "-",
-            "Volume Check": pf(volume_pass),
+            "Price": latest_price or "-",
+            "Slope": round(slope_val, 2) if not np.isnan(slope_val) else "-",
+            "Volume": pf(volume_pass),
             "After-hours %": round(pct_change, 2),
             "MACD": macd_status,
             "RSI": rsi_status,
@@ -151,9 +139,9 @@ def analyze_ticker(ticker):
     except Exception as e:
         return {
             "Ticker": ticker,
-            "Latest Price": "-",
-            "Trend Slope": "-",
-            "Volume Check": "❌ Error",
+            "Price": "-",
+            "Slope": "-",
+            "Volume": "❌ Error",
             "After-hours %": "-",
             "MACD": "-",
             "RSI": "-",
@@ -164,14 +152,13 @@ def analyze_ticker(ticker):
 
 # --- Run Scanner ---
 if st.button("🔍 Run Scanner"):
-    with st.spinner("Fetching and analyzing data..."):
+    with st.spinner("Fetching & analyzing data..."):
         results = [analyze_ticker(t) for t in tickers]
         df = pd.DataFrame(results)
         df = df.sort_values("After-hours %", ascending=False).reset_index(drop=True)
-        st.dataframe(df, width='stretch')
-        st.success("✅ Scan complete!")
+        st.dataframe(df, width='stretch', height=600)  # Single screen output
 
-        # Optional Chart with RSI & MACD
+        # --- Chart ---
         if show_chart:
             selected_ticker = st.selectbox("📈 View chart for:", tickers)
             if selected_ticker:
@@ -181,7 +168,6 @@ if st.button("🔍 Run Scanner"):
                     macd, macd_signal, macd_hist = compute_macd(chart_data)
 
                     fig = go.Figure()
-                    # Price candles
                     fig.add_trace(go.Candlestick(
                         x=chart_data.index,
                         open=chart_data['Open'],
@@ -190,7 +176,6 @@ if st.button("🔍 Run Scanner"):
                         close=chart_data['Close'],
                         name='Price'
                     ))
-                    # RSI line
                     if not rsi.dropna().empty:
                         fig.add_trace(go.Scatter(
                             x=chart_data.index,
@@ -199,7 +184,6 @@ if st.button("🔍 Run Scanner"):
                             name='RSI',
                             yaxis='y2'
                         ))
-                    # MACD histogram
                     if not macd_hist.dropna().empty:
                         fig.add_trace(go.Bar(
                             x=chart_data.index,
@@ -210,24 +194,15 @@ if st.button("🔍 Run Scanner"):
                         ))
 
                     fig.update_layout(
-                        yaxis2=dict(
-                            overlaying='y',
-                            side='right',
-                            range=[0, 100],
-                            title='RSI'
-                        ),
-                        yaxis3=dict(
-                            overlaying='y',
-                            side='left',
-                            position=0.15,
-                            title='MACD Hist'
-                        ),
-                        height=600,
                         title=f"{selected_ticker} Price, RSI & MACD",
-                        legend=dict(orientation="h")
+                        yaxis=dict(title='Price', side='left'),
+                        yaxis2=dict(title='RSI', overlaying='y', side='right', range=[0, 100]),
+                        yaxis3=dict(title='MACD Hist', overlaying='y', side='right', position=0.85),
+                        height=600,
+                        legend=dict(orientation='h')
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("No chart data available for this ticker.")
 
-st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Includes MACD & RSI")
+st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | MACD & RSI included | Volume check fixed for futures")
