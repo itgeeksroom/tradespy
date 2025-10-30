@@ -147,7 +147,7 @@ if st.button("Run Scanner"):
         ])
 
         st.subheader("📊 Morning Scan Results")
-        st.dataframe(df_summary, use_container_width=True)
+        st.dataframe(df_summary, width="stretch")
 
         # Highlight best setups
         bullish = df_summary[df_summary["Summary"].str.contains("🔥", na=False)]
@@ -155,10 +155,10 @@ if st.button("Run Scanner"):
 
         if not bullish.empty:
             st.success("🔥 **Bullish Candidates**")
-            st.dataframe(bullish)
+            st.dataframe(bullish, width="stretch")
 
         if not bearish.empty:
             st.warning("⚠️ **Bearish Candidates**")
-            st.dataframe(bearish)
+            st.dataframe(bearish, width="stretch")
 
         st.caption("Data source: Yahoo Finance (free). Options flow only for stocks. Futures handled automatically.")
