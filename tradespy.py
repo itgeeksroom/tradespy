@@ -2,10 +2,15 @@ import streamlit as st
 import yfinance as yf
 import numpy as np
 import pandas as pd
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+import io
 
-# --- Streamlit Page Setup ---
-st.set_page_config(page_title="📊 Stock & Futures Scanner", layout="centered")
-st.title("📊 US Stock & Futures Scanner — Trend, Volatility & Flow")
+# --- Page Setup ---
+st.set_page_config(page_title="📊 US Stock & Futures Scanner", layout="centered")
+st.title("📊 Stock & Futures Scanner — Trend, Volatility & Flow")
 
 # --- Sidebar Inputs ---
 st.sidebar.header("⚙️ Scanner Settings")
@@ -16,11 +21,10 @@ show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
 
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-# --- Cached data fetch ---
+# --- Cached Data Fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period):
-    df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
-    return df
+    return yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
 
 # --- Options flow for stocks ---
 @st.cache_data(ttl=300)
@@ -46,7 +50,7 @@ def get_cp_ratio(ticker):
     except:
         return np.nan, "Error"
 
-# --- Analyze ticker ---
+# --- Analyze Ticker ---
 def analyze_stock(ticker):
     try:
         df = get_data(ticker, period)
@@ -54,47 +58,50 @@ def analyze_stock(ticker):
             return {"Ticker": ticker, "Price": "-", "Trend": "-", "Volatility": "-", 
                     "Volume": "-", "Flow": "-", "Summary": "No data"}
 
-        # --- Average volume ---
+        # --- Avg Volume ---
         avg_vol = float(df["Volume"].mean())
         volume_pass = avg_vol > min_volume
 
-        # --- Trend slope (last 45 days) ---
+        # --- Trend Slope ---
         slope_pass = False
-        if len(df["Close"]) >= 45:
-            recent = df["Close"].tail(45).to_numpy()  # convert to numpy array
+        if len(df["Close"]) >= 20:  # shorter lookback for faster response
+            recent = df["Close"].tail(20).to_numpy()
             x = np.arange(len(recent))
-            slope = np.polyfit(x, recent, 1)[0]  # scalar
+            slope = np.polyfit(x, recent, 1)[0]
             slope_pass = slope > 0
 
         # --- Volatility ---
-        if ticker.endswith("=F"):  # Futures: ATR as volatility proxy
+        if ticker.endswith("=F"):
             recent_close = df["Close"].tail(14).to_numpy()
             atr = recent_close.max() - recent_close.min()
             vol_pass = atr > 0
-        else:  # Stocks: RV30 & IV30
+        else:
             rv30 = df["Close"].pct_change().rolling(30).std() * np.sqrt(252)
             iv30 = rv30 * 0.8
             rv_last = rv30.dropna().to_numpy()[-1] if not rv30.dropna().empty else np.nan
             iv_last = iv30.dropna().to_numpy()[-1] if not iv30.dropna().empty else np.nan
             vol_pass = False
             if not np.isnan(rv_last) and rv_last != 0 and not np.isnan(iv_last):
-                vol_pass = (iv_last / rv_last) > 1
+                vol_pass = (iv_last / rv_last) > 0.8  # more sensitive
 
         # --- Volume spike ---
         vol_ma = df["Volume"].rolling(20).mean().to_numpy()[-1]
-        vol_signal = "Volume ↑" if df["Volume"].to_numpy()[-1] > 1.5 * vol_ma else "Volume Normal"
+        vol_signal = "Volume ↑" if df["Volume"].to_numpy()[-1] > 1.2 * vol_ma else "Volume Normal"
 
         # --- Options flow ---
         cp_ratio, flow_bias = get_cp_ratio(ticker)
 
-        # --- Summary logic ---
-        summary = "Sideways / uncertain"
+        # --- Nuanced Summary ---
         if slope_pass and vol_pass and volume_pass:
             summary = "🔥 Strong Up Move Potential" if flow_bias=="Bullish" else "Uptrend Candidate"
+        elif slope_pass and (vol_pass or volume_pass):
+            summary = "Moderate Uptrend"
         elif not slope_pass and vol_pass and volume_pass:
             summary = "⚠️ Downside Pressure" if flow_bias=="Bearish" else "Downtrend Candidate"
-        elif not slope_pass and not vol_pass:
-            summary = "Low volatility / weak trend"
+        elif not slope_pass and (vol_pass or volume_pass):
+            summary = "Moderate Downtrend"
+        else:
+            summary = "Sideways / uncertain"
 
         return {
             "Ticker": ticker,
@@ -117,27 +124,20 @@ if st.button("🔍 Run Scanner"):
     else:
         results = [analyze_stock(t) for t in tickers]
         df = pd.DataFrame(results)
-        st.subheader("📊 Scan Results")
-        st.dataframe(df, width="stretch")
+        st.session_state["last_scan"] = df  # store results
 
-        # --- Highlight top setups ---
-        bullish = df[df["Summary"].str.contains("🔥|Uptrend Candidate", regex=True, na=False)]
-        bearish = df[df["Summary"].str.contains("⚠️|Downtrend Candidate", regex=True, na=False)]
-        if not bullish.empty:
-            st.success("🔥 Bullish Candidates")
-            st.dataframe(bullish, width="stretch")
-        if not bearish.empty:
-            st.warning("⚠️ Bearish Candidates")
-            st.dataframe(bearish, width="stretch")
+# --- Display Results ---
+if "last_scan" in st.session_state:
+    df = st.session_state["last_scan"]
+    st.subheader("📊 Scan Results")
+    st.dataframe(df, width="stretch")
 
-        # --- Optional chart ---
-        if show_chart:
-            selected = st.selectbox("📈 View chart for:", tickers)
-            if selected:
-                chart_df = get_data(selected, period)
-                if not chart_df.empty:
-                    st.line_chart(chart_df["Close"])
-                else:
-                    st.warning("No chart data for this ticker.")
-
-st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Stocks + Futures ready")
+    # --- Chart Dropdown ---
+    if show_chart:
+        selected = st.selectbox("📈 View chart for:", tickers)
+        if selected:
+            chart_df = get_data(selected, period)
+            if not chart_df.empty:
+                st.line_chart(chart_df["Close"])
+            else:
+                st.warning("No chart data for this ticker.")
