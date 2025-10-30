@@ -69,24 +69,36 @@ def get_option_flow(ticker):
         return {"call_volume": np.nan, "put_volume": np.nan, "cp_ratio": np.nan, "flow_bias": "Error"}
 
 def analyze_trend(df, ticker):
+    # Compute rolling averages
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["Volatility"] = df["Close"].pct_change().rolling(20).std() * 100
     df["Volume_MA20"] = df["Volume"].rolling(20).mean()
 
+    # Drop rows without SMA values
+    df = df.dropna(subset=["SMA20", "SMA50"])
+    if len(df) < 2:
+        return "Unknown", "Unknown", "Unknown", np.nan
+
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
-    trend = (
-        "Uptrend" if latest["SMA20"] > latest["SMA50"]
-        else "Downtrend" if latest["SMA20"] < latest["SMA50"]
-        else "Sideways"
-    )
+    # trend logic safely using scalars
+    sma20 = latest["SMA20"]
+    sma50 = latest["SMA50"]
+
+    if np.isnan(sma20) or np.isnan(sma50):
+        trend = "Unknown"
+    elif sma20 > sma50:
+        trend = "Uptrend"
+    elif sma20 < sma50:
+        trend = "Downtrend"
+    else:
+        trend = "Sideways"
 
     vol_expanding = latest["Volatility"] > prev["Volatility"]
     vol_trend = "Expanding" if vol_expanding else "Contracting"
 
-    # Volume signal: only for stocks
     if ticker.endswith("=F"):
         vol_signal = "No Volume Data"
     else:
@@ -122,7 +134,7 @@ if st.button("Run Scanner"):
                         summary_parts.append("⚠️ Downside Continuation")
 
                 summary = " | ".join(summary_parts)
-                summary_data.append([ticker, round(last_price,2), trend, vol_trend, vol_signal, bias, summary])
+                summary_data.append([ticker, round(last_price,2) if last_price else "-", trend, vol_trend, vol_signal, bias, summary])
 
             except Exception as e:
                 summary_data.append([ticker, "-", "❌ Error", "❌ Error", "❌ Error", "❌ Error", f"Error: {e}"])
