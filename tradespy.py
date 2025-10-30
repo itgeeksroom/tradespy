@@ -3,20 +3,22 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 
-# --- Streamlit Page Setup ---
+# --- Streamlit Setup ---
 st.set_page_config(page_title="📊 Stock & Futures Scanner", layout="centered")
-st.title("📊 US Stock & Futures Volatility & Trend Scanner")
+st.title("📊 US Stock & Futures Trend & Signal Scanner")
 
-# --- Sidebar Inputs ---
+# --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
 
 tickers_input = st.sidebar.text_input(
-    "Enter stock/futures symbols (comma separated):", "TSLA, AAPL, NVDA, ES=F"
+    "Enter stock/futures symbols (comma separated):",
+    "TSLA, AAPL, NVDA, ES=F, NQ=F"
 )
 
-period = st.sidebar.selectbox("Data Period:", ["3mo", "6mo", "1y"], index=1)
-min_volume = st.sidebar.number_input("Minimum Avg Volume", value=2_000_000, step=500_000)
+period = st.sidebar.selectbox("Historical Data Period:", ["3mo", "6mo", "1y"], index=1)
+min_volume = st.sidebar.number_input("Minimum Avg Volume (for stocks)", value=2_000_000, step=500_000)
 show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
+pct_threshold = st.sidebar.number_input("After-hours / pre-market % change threshold", value=1.0, step=0.1)
 
 # --- Parse tickers ---
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
@@ -24,96 +26,99 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 # --- Cached data fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period):
-    """Fetch OHLCV data with caching."""
     return yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
 
-# --- Stock/Futures analysis function ---
+# --- Analysis function ---
 def analyze_ticker(ticker):
     try:
         data = get_data(ticker, period)
-        if data.empty:
-            return {
-                "Ticker": ticker,
-                "Avg Volume": "❌ N/A",
-                "IV30/RV30": "❌ N/A",
-                "TS Slope": "❌ N/A",
-                "Signal": "🟠",
-                "Summary": "No data available",
-            }
+        tk = yf.Ticker(ticker)
+        info = tk.info
 
-        # --- Average Volume ---
-        avg_volume = float(data["Volume"].mean())
+        # Latest price (after-hours / pre-market / regular)
+        latest_price = info.get("postMarketPrice") or info.get("preMarketPrice") or info.get("regularMarketPrice")
+        prev_close = info.get("previousClose")
+        pct_change = (latest_price - prev_close) / prev_close * 100 if latest_price and prev_close else 0
+
+        # Average volume
+        avg_volume = float(data["Volume"].mean()) if not data.empty else 0
         volume_pass = avg_volume >= min_volume
 
-        # --- Realized Volatility (RV30) & Mock IV30 ---
-        rv30 = data["Close"].pct_change().rolling(30).std() * np.sqrt(252)
-        iv30 = rv30 * 0.8  # Mock IV
-
-        rv30_last = float(rv30.dropna().iloc[-1]) if not rv30.dropna().empty else np.nan
-        iv30_last = float(iv30.dropna().iloc[-1]) if not iv30.dropna().empty else np.nan
-
-        iv_rv_ratio = iv30_last / rv30_last if (not np.isnan(rv30_last) and rv30_last != 0) else np.nan
-        iv_rv_pass = bool(iv_rv_ratio > 1) if not np.isnan(iv_rv_ratio) else False
-
-        # --- Trend Slope (last 45 days) ---
+        # Historical trend slope
         slope_pass = False
+        slope = 0
         if len(data["Close"]) >= 45:
             recent_close = data["Close"].tail(45).values
             x = np.arange(len(recent_close))
             slope = np.polyfit(x, recent_close, 1)[0]
             slope_pass = slope > 0
 
-        # --- Summary logic & signal ---
-        if np.isnan(iv_rv_ratio):
-            summary = f"{ticker} data insufficient"
-            signal = "🟠"
-        elif iv_rv_ratio < 1:
-            summary = f"{ticker} low implied volatility"
-            signal = "🟠"
-        elif slope_pass and volume_pass:
-            summary = f"{ticker} bullish momentum"
-            signal = "🟢"
-        elif not slope_pass and volume_pass:
-            summary = f"{ticker} bearish pressure"
-            signal = "🔴"
+        # Determine signal based on after-hours / slope
+        if pct_change >= pct_threshold:
+            signal = "🟢 Bullish"
+            summary = "Uptrend detected after hours / pre-market"
+        elif pct_change <= -pct_threshold:
+            signal = "🔴 Bearish"
+            summary = "Downtrend detected after hours / pre-market"
         else:
-            summary = f"{ticker} sideways / uncertain"
-            signal = "🟠"
+            # Use slope if after-hours move is small
+            if slope_pass:
+                signal = "🟢 Bullish"
+                summary = "Uptrend based on historical momentum"
+            elif not slope_pass:
+                signal = "🔴 Bearish"
+                summary = "Downtrend based on historical momentum"
+            else:
+                signal = "🟠 Neutral"
+                summary = "Sideways / uncertain"
 
-        # --- Format pass/fail ---
+        # Buy / Short guidance
+        if signal == "🟢 Bullish" and volume_pass:
+            recommendation = "Buy"
+        elif signal == "🔴 Bearish" and volume_pass:
+            recommendation = "Short"
+        else:
+            recommendation = "Wait"
+
+        # Format pass/fail
         def pf(val):
             return "✅ PASS" if val else "❌ FAIL"
 
         return {
             "Ticker": ticker,
-            "Avg Volume": pf(volume_pass),
-            "IV30/RV30": pf(iv_rv_pass),
-            "TS Slope": pf(slope_pass),
+            "Latest Price": latest_price,
+            "Trend Slope": round(slope, 2),
+            "Volume Check": pf(volume_pass),
+            "After-hours %": round(pct_change, 2),
             "Signal": signal,
-            "Summary": summary,
+            "Recommendation": recommendation,
+            "Summary": summary
         }
 
     except Exception as e:
         return {
             "Ticker": ticker,
-            "Avg Volume": "❌ Error",
-            "IV30/RV30": "❌ Error",
-            "TS Slope": "❌ Error",
+            "Latest Price": "-",
+            "Trend Slope": "-",
+            "Volume Check": "❌ Error",
+            "After-hours %": "-",
             "Signal": "🟠",
-            "Summary": f"Error: {e}",
+            "Recommendation": "Error",
+            "Summary": f"Error: {e}"
         }
 
-# --- Run scanner button ---
+# --- Run scanner ---
 if st.button("🔍 Run Scanner"):
     with st.spinner("Fetching and analyzing data..."):
         results = [analyze_ticker(t) for t in tickers]
         df = pd.DataFrame(results)
 
-        # --- Display DataFrame ---
+        # Sort by After-hours % change
+        df = df.sort_values("After-hours %", ascending=False).reset_index(drop=True)
         st.dataframe(df, width='stretch')
         st.success("✅ Scan complete!")
 
-        # --- Optional: Chart for selected ticker ---
+        # Optional chart for selected ticker
         if show_chart:
             selected_ticker = st.selectbox("📈 View chart for:", tickers)
             if selected_ticker:
