@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 
 # --- Streamlit Setup ---
-st.set_page_config(page_title="📊 Advanced Stock & Futures Scanner", layout="wide")
-st.title("📊 US Stock & Futures Trend & Signal Scanner (Stable)")
+st.set_page_config(page_title="📊 Stock & Futures Scanner", layout="wide")
+st.title("📊 US Stock & Futures Trend & Signal Scanner")
 
-# --- Sidebar Settings ---
+# --- Sidebar Inputs ---
 st.sidebar.header("⚙️ Scanner Settings")
 tickers_input = st.sidebar.text_input(
     "Enter stock/futures symbols (comma separated):",
@@ -18,21 +18,21 @@ timeframe = st.sidebar.selectbox(
     ["1m", "5m", "15m", "1h", "4h", "1d"], index=5
 )
 min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
-pct_threshold = st.sidebar.number_input("After-hours % change threshold", value=1.0, step=0.1)
+after_hours_threshold = st.sidebar.number_input("After-hours % change threshold", value=1.0, step=0.1)
 
-# --- Period mapping ---
+# --- Period mapping for yfinance ---
 period_map = {"1m": "7d", "5m": "60d", "15m": "60d", "1h": "180d", "4h": "2y", "1d": "2y"}
 period = period_map[timeframe]
 
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-# --- Cached data fetch ---
+# --- Cached Data Fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period, interval):
     try:
         return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
     except Exception:
-        return pd.DataFrame()  # Return empty DataFrame on failure
+        return pd.DataFrame()
 
 # --- Compute RSI ---
 def compute_rsi(series, period=14):
@@ -49,8 +49,8 @@ def compute_rsi(series, period=14):
 def detect_pattern(data):
     pattern = "-"
     if len(data) >= 20:
-        highs = data['High'].tail(20)
-        lows = data['Low'].tail(20)
+        highs = data['High'].tail(20)  # Series
+        lows = data['Low'].tail(20)    # Series
         if len(highs) >= 2 and np.isclose(highs.max(), highs.nlargest(2).iloc[-1], rtol=0.01):
             pattern = "Double Top"
         elif len(lows) >= 2 and np.isclose(lows.min(), lows.nsmallest(2).iloc[-1], rtol=0.01):
@@ -107,15 +107,15 @@ def analyze_ticker(ticker):
         # Support/Resistance
         support, resistance = support_resistance(data)
 
-        # Trend Score
+        # Trend Score & Micro Signals
         score = 0
         micro_signals = []
         if slope_pass: score += 1; micro_signals.append("Slope +")
         if rsi_last <= 30: score += 1; micro_signals.append("RSI oversold")
         if rsi_last >= 70: score -= 1; micro_signals.append("RSI overbought")
         if volume_pass: score += 1; micro_signals.append("Volume ok")
-        if pct_change >= pct_threshold: score += 1; micro_signals.append("After-hours up")
-        if pct_change <= -pct_threshold: score -= 1; micro_signals.append("After-hours down")
+        if pct_change >= after_hours_threshold: score += 1; micro_signals.append("After-hours up")
+        if pct_change <= -after_hours_threshold: score -= 1; micro_signals.append("After-hours down")
 
         bullish_pct = round((sum([1 for m in micro_signals if "+" in m])/len(micro_signals))*100,1) if micro_signals else 0
         bearish_pct = round((sum([1 for m in micro_signals if "-" in m])/len(micro_signals))*100,1) if micro_signals else 0
