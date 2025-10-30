@@ -3,9 +3,8 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 
-# --- Streamlit Setup ---
-st.set_page_config(page_title="📊 US Stocks & ETFs Trend Scanner", layout="wide")
-st.title("📊 Stable US Stocks & ETFs Trend Scanner")
+st.set_page_config(page_title="📊 US Market Scanner", layout="wide")
+st.title("📊 US Stocks, ETFs & Futures Trend Scanner")
 
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
@@ -14,14 +13,20 @@ timeframe = st.sidebar.selectbox(
 )
 min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
 
-# --- Predefined Top 40 Stocks + Major ETFs ---
-tickers = [
+# --- Predefined Lists ---
+stocks = [
     "AAPL","MSFT","AMZN","NVDA","TSLA","META","GOOG","GOOGL","BRK-B","JPM",
     "UNH","V","MA","PG","HD","BAC","KO","PFE","XOM","CVX","DIS",
     "VZ","T","MRK","ABBV","NFLX","INTC","ORCL","NKE","MCD","CRM",
-    "ACN","COST","AVGO","TXN","QCOM","BMY","MDT","LIN","AMGN","SPY",
-    "QQQ","IWM","DIA","VOO","XLK","XLF","XLY","XLE","XLI"
+    "ACN","COST","AVGO","TXN","QCOM","BMY","MDT","LIN","AMGN"
 ]
+
+etfs = ["SPY","QQQ","IWM","DIA","VOO","XLK","XLF","XLY","XLE","XLI"]
+
+futures = ["ES=F","NQ=F","YM=F","RTY=F","CL=F","GC=F"]
+
+# Combine all for caching
+all_tickers = stocks + etfs + futures
 
 # --- Cached Data Fetch ---
 @st.cache_data(ttl=1800)
@@ -70,7 +75,7 @@ def analyze_ticker(ticker):
 
     latest_price = round(float(data["Close"].iloc[-1]), 2)
     avg_volume = float(data["Volume"].mean())
-    volume_pass = avg_volume >= min_volume if "=F" not in ticker else True
+    volume_pass = avg_volume >= min_volume if ticker in stocks else True
 
     slope, slope_pass = compute_slope(data["Close"])
     trend = "Uptrend" if slope_pass else "Downtrend" if slope_pass is not None else "Sideway"
@@ -86,7 +91,6 @@ def analyze_ticker(ticker):
     else:
         rsi_status = "Neutral"
 
-    # Signal
     if slope_pass and volume_pass and (rsi_last < 70):
         signal = "🟢 Bullish"
     elif not slope_pass and volume_pass and (rsi_last > 30):
@@ -113,6 +117,14 @@ def analyze_ticker(ticker):
 
 # --- Run Scanner ---
 if st.button("🔍 Run Scanner"):
-    results = [analyze_ticker(t) for t in tickers]
+    results = [analyze_ticker(t) for t in all_tickers]
     df = pd.DataFrame(results)
-    st.dataframe(df, width='stretch', height=900)
+
+    # --- Create Tabs ---
+    tabs = st.tabs(["Stocks", "ETFs", "Futures"])
+    with tabs[0]:
+        st.dataframe(df[df["Ticker"].isin(stocks)], width='stretch', height=700)
+    with tabs[1]:
+        st.dataframe(df[df["Ticker"].isin(etfs)], width='stretch', height=500)
+    with tabs[2]:
+        st.dataframe(df[df["Ticker"].isin(futures)], width='stretch', height=500)
