@@ -33,6 +33,17 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 def get_data(ticker, period, interval):
     return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
 
+# --- Compute RSI ---
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ma_up = up.rolling(period).mean()
+    ma_down = down.rolling(period).mean()
+    rs = ma_up / ma_down
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
 # --- Analyze Ticker ---
 def analyze_ticker(ticker):
     try:
@@ -59,6 +70,19 @@ def analyze_ticker(ticker):
             x = np.arange(len(recent_close))
             slope_val = float(np.polyfit(x, recent_close, 1)[0])
             slope_pass = slope_val > 0
+
+        # RSI calculation
+        rsi_series = compute_rsi(data['Close'])
+        rsi_last = float(rsi_series.dropna().iloc[-1]) if not rsi_series.dropna().empty else np.nan
+        if not np.isnan(rsi_last):
+            if rsi_last >= 70:
+                rsi_status = "Overbought"
+            elif rsi_last <= 30:
+                rsi_status = "Oversold"
+            else:
+                rsi_status = "Neutral"
+        else:
+            rsi_status = "-"
 
         # Signal & Summary
         if pct_change >= pct_threshold:
@@ -94,6 +118,8 @@ def analyze_ticker(ticker):
             "Slope": round(slope_val, 2) if not np.isnan(slope_val) else "-",
             "Volume": pf(volume_pass),
             "After-hours %": round(pct_change, 2),
+            "RSI": round(rsi_last, 2) if not np.isnan(rsi_last) else "-",
+            "RSI Status": rsi_status,
             "Signal": signal,
             "Recommendation": recommendation,
             "Summary": summary
@@ -106,6 +132,8 @@ def analyze_ticker(ticker):
             "Slope": "-",
             "Volume": "❌ Error",
             "After-hours %": "-",
+            "RSI": "-",
+            "RSI Status": "-",
             "Signal": "🟠",
             "Recommendation": "Error",
             "Summary": f"Error: {e}"
@@ -142,7 +170,7 @@ if st.session_state.results is not None:
                     name='Price'
                 ))
 
-                # Add Buy/Sell markers based on recommendation
+                # Add Buy/Sell markers
                 row = df[df["Ticker"] == selected_ticker]
                 rec = row["Recommendation"].values[0]
                 price = row["Price"].values[0]
