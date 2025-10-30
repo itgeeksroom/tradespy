@@ -5,7 +5,7 @@ import pandas as pd
 
 # --- Streamlit Setup ---
 st.set_page_config(page_title="📊 Advanced Stock & Futures Scanner", layout="wide")
-st.title("📊 US Stock & Futures Trend & Signal Scanner (Advanced)")
+st.title("📊 US Stock & Futures Trend & Signal Scanner (Stable)")
 
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
@@ -29,7 +29,10 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 # --- Cached data fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period, interval):
-    return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
+    try:
+        return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
+    except Exception:
+        return pd.DataFrame()  # Return empty DataFrame on failure
 
 # --- Compute RSI ---
 def compute_rsi(series, period=14):
@@ -40,7 +43,7 @@ def compute_rsi(series, period=14):
     ma_down = down.rolling(period).mean()
     rs = ma_up / ma_down
     rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return rsi.dropna()
 
 # --- Detect Patterns ---
 def detect_pattern(data):
@@ -48,19 +51,18 @@ def detect_pattern(data):
     if len(data) >= 20:
         highs = data['High'].tail(20)
         lows = data['Low'].tail(20)
-        # Double Top
-        if np.isclose(highs.max(), highs.nlargest(2).iloc[-1], rtol=0.01):
+        if len(highs) >= 2 and np.isclose(highs.max(), highs.nlargest(2).iloc[-1], rtol=0.01):
             pattern = "Double Top"
-        # Double Bottom
-        elif np.isclose(lows.min(), lows.nsmallest(2).iloc[-1], rtol=0.01):
+        elif len(lows) >= 2 and np.isclose(lows.min(), lows.nsmallest(2).iloc[-1], rtol=0.01):
             pattern = "Double Bottom"
-        # Channel (optional)
         elif highs.max() - lows.min() > 0:
             pattern = "Channel"
     return pattern
 
 # --- Support & Resistance ---
 def support_resistance(data, window=20):
+    if len(data) < window:
+        return np.nan, np.nan
     support = data['Low'].tail(window).min()
     resistance = data['High'].tail(window).max()
     return support, resistance
@@ -78,14 +80,11 @@ def analyze_ticker(ticker):
 
         # Volume check
         avg_volume = float(data["Volume"].mean())
-        if "=F" in ticker:
-            volume_pass = avg_volume >= 1000
-        else:
-            volume_pass = avg_volume >= min_volume
+        volume_pass = avg_volume >= min_volume if "=F" not in ticker else avg_volume >= 1000
 
         # Trend Slope
-        slope_pass = False
         slope_val = np.nan
+        slope_pass = False
         if len(data["Close"]) >= 45:
             recent_close = data["Close"].tail(45).values
             x = np.arange(len(recent_close))
@@ -94,7 +93,7 @@ def analyze_ticker(ticker):
 
         # RSI
         rsi_series = compute_rsi(data['Close'])
-        rsi_last = float(rsi_series.dropna().iloc[-1])
+        rsi_last = float(rsi_series.iloc[-1]) if not rsi_series.empty else np.nan
         if rsi_last >= 70:
             rsi_status = "Overbought"
         elif rsi_last <= 30:
@@ -108,21 +107,20 @@ def analyze_ticker(ticker):
         # Support/Resistance
         support, resistance = support_resistance(data)
 
-        # Trend Strength Score
+        # Trend Score
         score = 0
         micro_signals = []
         if slope_pass: score += 1; micro_signals.append("Slope +")
         if rsi_last <= 30: score += 1; micro_signals.append("RSI oversold")
         if rsi_last >= 70: score -= 1; micro_signals.append("RSI overbought")
-        if volume_pass: score +=1; micro_signals.append("Volume ok")
-        if pct_change >= pct_threshold: score +=1; micro_signals.append("After-hours up")
-        if pct_change <= -pct_threshold: score -=1; micro_signals.append("After-hours down")
+        if volume_pass: score += 1; micro_signals.append("Volume ok")
+        if pct_change >= pct_threshold: score += 1; micro_signals.append("After-hours up")
+        if pct_change <= -pct_threshold: score -= 1; micro_signals.append("After-hours down")
 
-        # % bullish / bearish
         bullish_pct = round((sum([1 for m in micro_signals if "+" in m])/len(micro_signals))*100,1) if micro_signals else 0
         bearish_pct = round((sum([1 for m in micro_signals if "-" in m])/len(micro_signals))*100,1) if micro_signals else 0
 
-        # Signal & Recommendation
+        # Signal
         if score >= 3:
             signal = "🟢 Bullish"
             recommendation = "Buy"
@@ -139,11 +137,11 @@ def analyze_ticker(ticker):
             "Slope": round(slope_val,2) if not np.isnan(slope_val) else "-",
             "Volume": "✅ PASS" if volume_pass else "❌ FAIL",
             "After-hours %": round(pct_change,2),
-            "RSI": round(rsi_last,2),
+            "RSI": round(rsi_last,2) if not np.isnan(rsi_last) else "-",
             "RSI Status": rsi_status,
             "Pattern": pattern,
-            "Support": round(support,2),
-            "Resistance": round(resistance,2),
+            "Support": round(support,2) if not np.isnan(support) else "-",
+            "Resistance": round(resistance,2) if not np.isnan(resistance) else "-",
             "Trend Score": score,
             "Bullish %": bullish_pct,
             "Bearish %": bearish_pct,
@@ -185,6 +183,6 @@ if st.button("🔍 Run Scanner"):
 if st.session_state.results:
     df = pd.DataFrame(st.session_state.results)
     df = df.sort_values("Bullish %", ascending=False).reset_index(drop=True)
-    st.dataframe(df, width='stretch', height=800)
+    st.dataframe(df, width='stretch', height=900)
 
 st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Buy/Short/Wait recommendations | Patterns included")
