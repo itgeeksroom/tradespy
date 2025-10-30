@@ -3,8 +3,9 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 
+# --- Page Setup ---
 st.set_page_config(page_title="📊 US Market Scanner", layout="wide")
-st.title("📊 US Stocks, ETFs & Futures Trend Scanner")
+st.title("📊 Stocks, ETFs & Futures Scanner")
 
 # --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
@@ -13,7 +14,7 @@ timeframe = st.sidebar.selectbox(
 )
 min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
 
-# --- Predefined Lists ---
+# --- Predefined Tickers ---
 stocks = [
     "AAPL","MSFT","AMZN","NVDA","TSLA","META","GOOG","GOOGL","BRK-B","JPM",
     "UNH","V","MA","PG","HD","BAC","KO","PFE","XOM","CVX","DIS",
@@ -25,7 +26,6 @@ etfs = ["SPY","QQQ","IWM","DIA","VOO","XLK","XLF","XLY","XLE","XLI"]
 
 futures = ["ES=F","NQ=F","YM=F","RTY=F","CL=F","GC=F"]
 
-# Combine all for caching
 all_tickers = stocks + etfs + futures
 
 # --- Cached Data Fetch ---
@@ -75,11 +75,20 @@ def analyze_ticker(ticker):
 
     latest_price = round(float(data["Close"].iloc[-1]), 2)
     avg_volume = float(data["Volume"].mean())
-    volume_pass = avg_volume >= min_volume if ticker in stocks else True
+
+    # --- Scale volume for intraday intervals ---
+    if timeframe in ["5m","1h","4h"]:
+        interval_factor = {"5m": 78, "1h": 6.5, "4h": 1.625}  # 6.5h trading day
+        scaled_volume_threshold = min_volume / interval_factor.get(timeframe, 1)
+    else:
+        scaled_volume_threshold = min_volume
+
+    volume_pass = avg_volume >= scaled_volume_threshold if ticker in stocks else True
 
     slope, slope_pass = compute_slope(data["Close"])
     trend = "Uptrend" if slope_pass else "Downtrend" if slope_pass is not None else "Sideway"
 
+    # --- RSI ---
     rsi_series = compute_rsi(data["Close"])
     rsi_last = round(float(rsi_series.iloc[-1]), 2) if not rsi_series.empty else np.nan
     if np.isnan(rsi_last):
@@ -91,6 +100,7 @@ def analyze_ticker(ticker):
     else:
         rsi_status = "Neutral"
 
+    # --- Signal ---
     if slope_pass and volume_pass and (rsi_last < 70):
         signal = "🟢 Bullish"
     elif not slope_pass and volume_pass and (rsi_last > 30):
@@ -99,8 +109,7 @@ def analyze_ticker(ticker):
         signal = "🟠 Neutral"
 
     summary_parts = []
-    if slope_pass: summary_parts.append("Trend slope positive")
-    else: summary_parts.append("Trend slope negative")
+    summary_parts.append("Trend slope positive" if slope_pass else "Trend slope negative")
     summary_parts.append(f"RSI: {rsi_status}")
     summary_parts.append(f"Avg Volume: {'Pass' if volume_pass else 'Fail'}")
     summary = ", ".join(summary_parts)
@@ -120,7 +129,7 @@ if st.button("🔍 Run Scanner"):
     results = [analyze_ticker(t) for t in all_tickers]
     df = pd.DataFrame(results)
 
-    # --- Create Tabs ---
+    # --- Tabs ---
     tabs = st.tabs(["Stocks", "ETFs", "Futures"])
     with tabs[0]:
         st.dataframe(df[df["Ticker"].isin(stocks)], width='stretch', height=700)
