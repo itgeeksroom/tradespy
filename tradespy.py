@@ -19,7 +19,8 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 # --- Cached data fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period):
-    return yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
+    df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
+    return df
 
 # --- Options flow for stocks ---
 @st.cache_data(ttl=300)
@@ -60,28 +61,28 @@ def analyze_stock(ticker):
         # --- Trend slope (last 45 days) ---
         slope_pass = False
         if len(df["Close"]) >= 45:
-            recent = df["Close"].tail(45).values  # numpy array for scalar operations
+            recent = df["Close"].tail(45).to_numpy()  # convert to numpy array
             x = np.arange(len(recent))
-            slope = np.polyfit(x, recent, 1)[0]
+            slope = np.polyfit(x, recent, 1)[0]  # scalar
             slope_pass = slope > 0
 
         # --- Volatility ---
         if ticker.endswith("=F"):  # Futures: ATR as volatility proxy
-            recent_close = df["Close"].tail(14).values
+            recent_close = df["Close"].tail(14).to_numpy()
             atr = recent_close.max() - recent_close.min()
             vol_pass = atr > 0
         else:  # Stocks: RV30 & IV30
             rv30 = df["Close"].pct_change().rolling(30).std() * np.sqrt(252)
             iv30 = rv30 * 0.8
-            rv_last = float(rv30.dropna().iloc[-1]) if not rv30.dropna().empty else np.nan
-            iv_last = float(iv30.dropna().iloc[-1]) if not iv30.dropna().empty else np.nan
+            rv_last = rv30.dropna().to_numpy()[-1] if not rv30.dropna().empty else np.nan
+            iv_last = iv30.dropna().to_numpy()[-1] if not iv30.dropna().empty else np.nan
             vol_pass = False
             if not np.isnan(rv_last) and rv_last != 0 and not np.isnan(iv_last):
                 vol_pass = (iv_last / rv_last) > 1
 
         # --- Volume spike ---
-        vol_ma = df["Volume"].rolling(20).mean().iloc[-1]
-        vol_signal = "Volume ↑" if df["Volume"].iloc[-1] > 1.5 * vol_ma else "Volume Normal"
+        vol_ma = df["Volume"].rolling(20).mean().to_numpy()[-1]
+        vol_signal = "Volume ↑" if df["Volume"].to_numpy()[-1] > 1.5 * vol_ma else "Volume Normal"
 
         # --- Options flow ---
         cp_ratio, flow_bias = get_cp_ratio(ticker)
@@ -97,7 +98,7 @@ def analyze_stock(ticker):
 
         return {
             "Ticker": ticker,
-            "Price": round(float(df["Close"].iloc[-1]),2),
+            "Price": round(float(df["Close"].to_numpy()[-1]),2),
             "Trend": "Uptrend" if slope_pass else "Downtrend",
             "Volatility": "High" if vol_pass else "Low",
             "Volume": vol_signal,
