@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 # --- Streamlit Setup ---
-st.set_page_config(page_title="📊 Stock & Futures Scanner", layout="centered")
+st.set_page_config(page_title="📊 Multi-Timeframe Stock & Futures Scanner", layout="centered")
 st.title("📊 US Stock & Futures Trend & Signal Scanner")
 
 # --- Sidebar Settings ---
@@ -15,7 +15,22 @@ tickers_input = st.sidebar.text_input(
     "TSLA, AAPL, NVDA, ES=F, NQ=F"
 )
 
-period = st.sidebar.selectbox("Historical Data Period:", ["3mo", "6mo", "1y"], index=1)
+timeframe = st.sidebar.selectbox(
+    "Select Timeframe:",
+    ["1m", "5m", "15m", "1h", "4h", "1d"], index=5
+)
+
+# Adjust period based on timeframe
+period_map = {
+    "1m": "7d",   # 1-min bars last ~7 days
+    "5m": "60d",
+    "15m": "60d",
+    "1h": "180d",
+    "4h": "2y",
+    "1d": "2y"
+}
+period = period_map[timeframe]
+
 min_volume = st.sidebar.number_input("Minimum Avg Volume (for stocks)", value=2_000_000, step=500_000)
 show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
 pct_threshold = st.sidebar.number_input("After-hours / pre-market % change threshold", value=1.0, step=0.1)
@@ -25,18 +40,18 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
 # --- Cached data fetch ---
 @st.cache_data(ttl=3600)
-def get_data(ticker, period):
+def get_data(ticker, period, interval):
     """Fetch historical OHLCV data with caching."""
-    return yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
+    return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
 
 # --- Analysis function ---
 def analyze_ticker(ticker):
     try:
-        data = get_data(ticker, period)
+        data = get_data(ticker, period, timeframe)
         tk = yf.Ticker(ticker)
         info = tk.info
 
-        # Latest price (after-hours / pre-market / regular)
+        # Latest price
         latest_price = info.get("postMarketPrice") or info.get("preMarketPrice") or info.get("regularMarketPrice")
         prev_close = info.get("previousClose")
         pct_change = (latest_price - prev_close) / prev_close * 100 if latest_price and prev_close else 0
@@ -48,14 +63,15 @@ def analyze_ticker(ticker):
         # Historical trend slope
         slope_pass = False
         slope = np.nan
-        if len(data["Close"]) >= 45:
-            recent_close = data["Close"].tail(45).values
+        lookback_bars = 45
+        if len(data["Close"]) >= lookback_bars:
+            recent_close = data["Close"].tail(lookback_bars).values
             x = np.arange(len(recent_close))
-            slope_array = np.polyfit(x, recent_close, 1)  # returns [slope, intercept]
+            slope_array = np.polyfit(x, recent_close, 1)
             slope = float(slope_array[0])
             slope_pass = slope > 0
 
-        # Determine signal based on after-hours / slope
+        # Determine signal
         if pct_change >= pct_threshold:
             signal = "🟢 Bullish"
             summary = "Uptrend detected after hours / pre-market"
@@ -63,7 +79,6 @@ def analyze_ticker(ticker):
             signal = "🔴 Bearish"
             summary = "Downtrend detected after hours / pre-market"
         else:
-            # Use slope if after-hours move is small
             if slope_pass:
                 signal = "🟢 Bullish"
                 summary = "Uptrend based on historical momentum"
@@ -82,7 +97,6 @@ def analyze_ticker(ticker):
         else:
             recommendation = "Wait"
 
-        # Format volume pass/fail
         def pf(val):
             return "✅ PASS" if val else "❌ FAIL"
 
@@ -114,17 +128,15 @@ if st.button("🔍 Run Scanner"):
     with st.spinner("Fetching and analyzing data..."):
         results = [analyze_ticker(t) for t in tickers]
         df = pd.DataFrame(results)
-
-        # Sort by After-hours % change
         df = df.sort_values("After-hours %", ascending=False).reset_index(drop=True)
         st.dataframe(df, width='stretch')
         st.success("✅ Scan complete!")
 
-        # Optional chart for selected ticker
+        # Optional chart
         if show_chart:
             selected_ticker = st.selectbox("📈 View chart for:", tickers)
             if selected_ticker:
-                chart_data = get_data(selected_ticker, period)
+                chart_data = get_data(selected_ticker, period, timeframe)
                 if not chart_data.empty:
                     st.line_chart(chart_data["Close"])
                 else:
