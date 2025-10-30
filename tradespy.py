@@ -26,6 +26,7 @@ tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 # --- Cached data fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period):
+    """Fetch historical OHLCV data with caching."""
     return yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=False)
 
 # --- Analysis function ---
@@ -46,11 +47,12 @@ def analyze_ticker(ticker):
 
         # Historical trend slope
         slope_pass = False
-        slope = 0
+        slope = np.nan
         if len(data["Close"]) >= 45:
             recent_close = data["Close"].tail(45).values
             x = np.arange(len(recent_close))
-            slope = np.polyfit(x, recent_close, 1)[0]
+            slope_array = np.polyfit(x, recent_close, 1)  # returns [slope, intercept]
+            slope = float(slope_array[0])
             slope_pass = slope > 0
 
         # Determine signal based on after-hours / slope
@@ -65,7 +67,7 @@ def analyze_ticker(ticker):
             if slope_pass:
                 signal = "🟢 Bullish"
                 summary = "Uptrend based on historical momentum"
-            elif not slope_pass:
+            elif not slope_pass and not np.isnan(slope):
                 signal = "🔴 Bearish"
                 summary = "Downtrend based on historical momentum"
             else:
@@ -80,14 +82,14 @@ def analyze_ticker(ticker):
         else:
             recommendation = "Wait"
 
-        # Format pass/fail
+        # Format volume pass/fail
         def pf(val):
             return "✅ PASS" if val else "❌ FAIL"
 
         return {
             "Ticker": ticker,
-            "Latest Price": latest_price,
-            "Trend Slope": round(slope, 2),
+            "Latest Price": latest_price or "-",
+            "Trend Slope": round(slope, 2) if not np.isnan(slope) else "-",
             "Volume Check": pf(volume_pass),
             "After-hours %": round(pct_change, 2),
             "Signal": signal,
