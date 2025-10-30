@@ -4,23 +4,24 @@ import numpy as np
 import pandas as pd
 
 # --- Streamlit Setup ---
-st.set_page_config(page_title="📊 Stable Stock & Futures Scanner", layout="wide")
-st.title("📊 Stable US Stock & Futures Trend Scanner")
+st.set_page_config(page_title="📊 US Stocks & ETFs Trend Scanner", layout="wide")
+st.title("📊 Stable US Stocks & ETFs Trend Scanner")
 
-# --- Sidebar Inputs ---
+# --- Sidebar Settings ---
 st.sidebar.header("⚙️ Scanner Settings")
-tickers_input = st.sidebar.text_input(
-    "Enter stock/futures symbols (comma separated):",
-    "TSLA, AAPL, NVDA, ES=F, NQ=F"
-)
 timeframe = st.sidebar.selectbox(
-    "Select Timeframe:",
-    ["1d", "4h", "1h", "5m"], index=0
+    "Select Timeframe:", ["1d", "4h", "1h", "5m"], index=0
 )
 min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
 
-# --- Parse tickers ---
-tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+# --- Predefined Top 40 Stocks + Major ETFs ---
+tickers = [
+    "AAPL","MSFT","AMZN","NVDA","TSLA","META","GOOG","GOOGL","BRK-B","JPM",
+    "UNH","V","MA","PG","HD","BAC","KO","PFE","XOM","CVX","DIS",
+    "VZ","T","MRK","ABBV","NFLX","INTC","ORCL","NKE","MCD","CRM",
+    "ACN","COST","AVGO","TXN","QCOM","BMY","MDT","LIN","AMGN","SPY",
+    "QQQ","IWM","DIA","VOO","XLK","XLF","XLY","XLE","XLI"
+]
 
 # --- Cached Data Fetch ---
 @st.cache_data(ttl=1800)
@@ -85,7 +86,7 @@ def analyze_ticker(ticker):
     else:
         rsi_status = "Neutral"
 
-    # Signal & Recommendation
+    # Signal
     if slope_pass and volume_pass and (rsi_last < 70):
         signal = "🟢 Bullish"
     elif not slope_pass and volume_pass and (rsi_last > 30):
