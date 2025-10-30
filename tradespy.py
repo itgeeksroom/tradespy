@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 
 # --- Streamlit Setup ---
 st.set_page_config(page_title="📊 Stock & Futures Scanner", layout="wide")
@@ -19,7 +18,6 @@ timeframe = st.sidebar.selectbox(
     ["1m", "5m", "15m", "1h", "4h", "1d"], index=5
 )
 min_volume = st.sidebar.number_input("Minimum Avg Volume (stocks)", value=2_000_000, step=500_000)
-show_chart = st.sidebar.checkbox("Show chart for selected ticker", value=True)
 pct_threshold = st.sidebar.number_input("After-hours % change threshold", value=1.0, step=0.1)
 
 # --- Period mapping ---
@@ -28,7 +26,7 @@ period = period_map[timeframe]
 
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-# --- Cache data fetch ---
+# --- Cached data fetch ---
 @st.cache_data(ttl=3600)
 def get_data(ticker, period, interval):
     return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
@@ -150,56 +148,6 @@ if st.button("🔍 Run Scanner"):
 if st.session_state.results:
     df = pd.DataFrame(st.session_state.results)
     df = df.sort_values("After-hours %", ascending=False).reset_index(drop=True)
-    st.dataframe(df, width='stretch', height=600)
+    st.dataframe(df, width='stretch', height=800)  # Full table on same screen
 
-    # --- Chart ---
-    if show_chart:
-        selected_ticker = st.selectbox("📈 View chart for:", tickers)
-        chart_data = get_data(selected_ticker, period, timeframe)
-        if chart_data.empty:
-            st.warning("No chart data available for this ticker/interval.")
-        else:
-            fig = go.Figure()
-            fig.add_trace(go.Candlestick(
-                x=chart_data.index,
-                open=chart_data['Open'],
-                high=chart_data['High'],
-                low=chart_data['Low'],
-                close=chart_data['Close'],
-                name='Price'
-            ))
-
-            # Use last candle close for marker
-            last_price = chart_data['Close'].iloc[-1]
-            rec = df[df["Ticker"] == selected_ticker]["Recommendation"].values[0]
-
-            if rec == "Buy":
-                fig.add_trace(go.Scatter(
-                    x=[chart_data.index[-1]],
-                    y=[last_price],
-                    mode="markers+text",
-                    marker=dict(color="green", size=15, symbol="triangle-up"),
-                    text=["Buy"],
-                    textposition="top center",
-                    name="Buy Signal"
-                ))
-            elif rec == "Short":
-                fig.add_trace(go.Scatter(
-                    x=[chart_data.index[-1]],
-                    y=[last_price],
-                    mode="markers+text",
-                    marker=dict(color="red", size=15, symbol="triangle-down"),
-                    text=["Short"],
-                    textposition="bottom center",
-                    name="Sell Signal"
-                ))
-
-            fig.update_layout(
-                title=f"{selected_ticker} Price Chart with Buy/Sell",
-                yaxis=dict(title='Price'),
-                height=600,
-                legend=dict(orientation='h')
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Buy/Sell signals shown on chart")
+st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Buy/Short/Wait recommendations")
