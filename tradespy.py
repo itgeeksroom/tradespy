@@ -32,8 +32,8 @@ def get_cp_ratio(ticker):
             return np.nan, "No options"
         chain = tk.option_chain(tk.options[0])
         calls, puts = chain.calls, chain.puts
-        call_vol = calls["volume"].fillna(0).sum()
-        put_vol = puts["volume"].fillna(0).sum()
+        call_vol = float(calls["volume"].fillna(0).sum())
+        put_vol = float(puts["volume"].fillna(0).sum())
         cp_ratio = call_vol / put_vol if put_vol > 0 else np.nan
         bias = "Neutral"
         if not np.isnan(cp_ratio):
@@ -53,38 +53,40 @@ def analyze_stock(ticker):
             return {"Ticker": ticker, "Price": "-", "Trend": "-", "Volatility": "-", 
                     "Volume": "-", "Flow": "-", "Summary": "No data"}
 
-        # Average volume
+        # --- Average volume ---
         avg_vol = float(df["Volume"].mean())
         volume_pass = avg_vol > min_volume
 
-        # Trend slope (last 45 days)
+        # --- Trend slope (last 45 days) ---
         slope_pass = False
         if len(df["Close"]) >= 45:
-            recent = df["Close"].tail(45)
+            recent = df["Close"].tail(45).values  # numpy array for scalar operations
             x = np.arange(len(recent))
             slope = np.polyfit(x, recent, 1)[0]
             slope_pass = slope > 0
 
-        # Volatility
+        # --- Volatility ---
         if ticker.endswith("=F"):  # Futures: ATR as volatility proxy
-            atr = df["Close"].rolling(14).apply(lambda x: x.max()-x.min()).iloc[-1]
+            recent_close = df["Close"].tail(14).values
+            atr = recent_close.max() - recent_close.min()
             vol_pass = atr > 0
         else:  # Stocks: RV30 & IV30
             rv30 = df["Close"].pct_change().rolling(30).std() * np.sqrt(252)
             iv30 = rv30 * 0.8
             rv_last = float(rv30.dropna().iloc[-1]) if not rv30.dropna().empty else np.nan
             iv_last = float(iv30.dropna().iloc[-1]) if not iv30.dropna().empty else np.nan
-            iv_rv_ratio = iv_last / rv_last if (rv_last and not np.isnan(rv_last)) else np.nan
-            vol_pass = bool(iv_rv_ratio > 1) if not np.isnan(iv_rv_ratio) else False
+            vol_pass = False
+            if not np.isnan(rv_last) and rv_last != 0 and not np.isnan(iv_last):
+                vol_pass = (iv_last / rv_last) > 1
 
-        # Volume spike
+        # --- Volume spike ---
         vol_ma = df["Volume"].rolling(20).mean().iloc[-1]
         vol_signal = "Volume ↑" if df["Volume"].iloc[-1] > 1.5 * vol_ma else "Volume Normal"
 
-        # Options flow
+        # --- Options flow ---
         cp_ratio, flow_bias = get_cp_ratio(ticker)
 
-        # Summary logic
+        # --- Summary logic ---
         summary = "Sideways / uncertain"
         if slope_pass and vol_pass and volume_pass:
             summary = "🔥 Strong Up Move Potential" if flow_bias=="Bullish" else "Uptrend Candidate"
@@ -95,7 +97,7 @@ def analyze_stock(ticker):
 
         return {
             "Ticker": ticker,
-            "Price": round(df["Close"].iloc[-1],2),
+            "Price": round(float(df["Close"].iloc[-1]),2),
             "Trend": "Uptrend" if slope_pass else "Downtrend",
             "Volatility": "High" if vol_pass else "Low",
             "Volume": vol_signal,
@@ -117,7 +119,7 @@ if st.button("🔍 Run Scanner"):
         st.subheader("📊 Scan Results")
         st.dataframe(df, width="stretch")
 
-        # Highlight top setups
+        # --- Highlight top setups ---
         bullish = df[df["Summary"].str.contains("🔥|Uptrend Candidate", regex=True, na=False)]
         bearish = df[df["Summary"].str.contains("⚠️|Downtrend Candidate", regex=True, na=False)]
         if not bullish.empty:
@@ -127,7 +129,7 @@ if st.button("🔍 Run Scanner"):
             st.warning("⚠️ Bearish Candidates")
             st.dataframe(bearish, width="stretch")
 
-        # Optional chart
+        # --- Optional chart ---
         if show_chart:
             selected = st.selectbox("📈 View chart for:", tickers)
             if selected:
