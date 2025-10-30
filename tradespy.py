@@ -11,10 +11,20 @@ st.set_page_config(page_title="Daily Stock & Futures Scanner", layout="wide")
 st.title("📈 Daily Stock & Futures Scanner — Stocks + Futures Ready")
 
 # ------------------------------------------------------------
-# 1️⃣ CONFIGURATION
+# 1️⃣ TICKER INPUT
 # ------------------------------------------------------------
-tickers = ["TSLA", "AAPL", "NVDA", "ES=F", "NQ=F", "CL=F"]  # mix of stocks + futures
-lookback_days = 60  # Number of days of data to analyze
+tickers_input = st.text_input(
+    "Enter stock/futures symbols (comma separated, e.g., TSLA, AAPL, ES=F, NQ=F):",
+    "TSLA, AAPL, ES=F"
+)
+
+# Parse input into a list
+tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+if not tickers:
+    st.warning("⚠️ Please enter at least one symbol to scan.")
+
+# Lookback period
+lookback_days = st.number_input("Lookback Days:", min_value=20, max_value=180, value=60, step=1)
 
 # ------------------------------------------------------------
 # 2️⃣ HELPER FUNCTIONS
@@ -85,53 +95,58 @@ def analyze_trend(df, ticker):
     return trend, vol_trend, vol_signal, latest["Close"]
 
 # ------------------------------------------------------------
-# 3️⃣ MAIN SCANNER LOOP
+# 3️⃣ RUN SCANNER ON BUTTON PRESS
 # ------------------------------------------------------------
-summary_data = []
+if st.button("Run Scanner"):
 
-for ticker in tickers:
-    st.write(f"🔍 Scanning {ticker} ...")
-    try:
-        df = get_price_data(ticker)
-        trend, vol_trend, vol_signal, last_price = analyze_trend(df, ticker)
+    if not tickers:
+        st.warning("⚠️ Please enter at least one symbol to scan.")
+    else:
+        summary_data = []
 
-        flow_data = get_option_flow(ticker)
-        bias = flow_data["flow_bias"]
+        for ticker in tickers:
+            st.write(f"🔍 Scanning {ticker} ...")
+            try:
+                df = get_price_data(ticker)
+                trend, vol_trend, vol_signal, last_price = analyze_trend(df, ticker)
 
-        # Simple summary interpretation
-        summary_parts = [trend, vol_trend, vol_signal, f"Flow: {bias}"]
-        if not ticker.endswith("=F"):  # only stock-based flow
-            if bias == "Bullish" and trend == "Uptrend":
-                summary_parts.append("🔥 Strong Up Move Potential")
-            elif bias == "Bearish" and trend == "Downtrend":
-                summary_parts.append("⚠️ Downside Continuation")
+                flow_data = get_option_flow(ticker)
+                bias = flow_data["flow_bias"]
 
-        summary = " | ".join(summary_parts)
-        summary_data.append([ticker, round(last_price,2), trend, vol_trend, vol_signal, bias, summary])
+                # Simple summary interpretation
+                summary_parts = [trend, vol_trend, vol_signal, f"Flow: {bias}"]
+                if not ticker.endswith("=F"):  # only stock-based flow
+                    if bias == "Bullish" and trend == "Uptrend":
+                        summary_parts.append("🔥 Strong Up Move Potential")
+                    elif bias == "Bearish" and trend == "Downtrend":
+                        summary_parts.append("⚠️ Downside Continuation")
 
-    except Exception as e:
-        summary_data.append([ticker, "-", "❌ Error", "❌ Error", "❌ Error", "❌ Error", f"Error: {e}"])
+                summary = " | ".join(summary_parts)
+                summary_data.append([ticker, round(last_price,2), trend, vol_trend, vol_signal, bias, summary])
 
-# ------------------------------------------------------------
-# 4️⃣ DISPLAY RESULTS
-# ------------------------------------------------------------
-df_summary = pd.DataFrame(summary_data, columns=[
-    "Ticker", "Last Price", "Trend", "Volatility", "Volume", "Flow Bias", "Summary"
-])
+            except Exception as e:
+                summary_data.append([ticker, "-", "❌ Error", "❌ Error", "❌ Error", "❌ Error", f"Error: {e}"])
 
-st.subheader("📊 Morning Scan Results")
-st.dataframe(df_summary, use_container_width=True)
+        # ------------------------------------------------------------
+        # 4️⃣ DISPLAY RESULTS
+        # ------------------------------------------------------------
+        df_summary = pd.DataFrame(summary_data, columns=[
+            "Ticker", "Last Price", "Trend", "Volatility", "Volume", "Flow Bias", "Summary"
+        ])
 
-# Highlight best setups
-bullish = df_summary[df_summary["Summary"].str.contains("🔥", na=False)]
-bearish = df_summary[df_summary["Summary"].str.contains("⚠️", na=False)]
+        st.subheader("📊 Morning Scan Results")
+        st.dataframe(df_summary, use_container_width=True)
 
-if not bullish.empty:
-    st.success("🔥 **Bullish Candidates**")
-    st.dataframe(bullish)
+        # Highlight best setups
+        bullish = df_summary[df_summary["Summary"].str.contains("🔥", na=False)]
+        bearish = df_summary[df_summary["Summary"].str.contains("⚠️", na=False)]
 
-if not bearish.empty:
-    st.warning("⚠️ **Bearish Candidates**")
-    st.dataframe(bearish)
+        if not bullish.empty:
+            st.success("🔥 **Bullish Candidates**")
+            st.dataframe(bullish)
 
-st.caption("Data source: Yahoo Finance (free). Options flow only for stocks. Futures handled automatically.")
+        if not bearish.empty:
+            st.warning("⚠️ **Bearish Candidates**")
+            st.dataframe(bearish)
+
+        st.caption("Data source: Yahoo Finance (free). Options flow only for stocks. Futures handled automatically.")
