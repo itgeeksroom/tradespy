@@ -1,9 +1,13 @@
 import yfinance as yf
 import pandas as pd
 
-# --- Load S&P 500 tickers (free source) ---
-sp500 = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-tickers = sp500['Symbol'].tolist()
+# --- Static top 40 S&P 500 tickers ---
+tickers = [
+    "AAPL", "MSFT", "AMZN", "NVDA", "TSLA", "GOOGL", "META", "BRK.B", "JPM", "JNJ",
+    "V", "PG", "UNH", "HD", "MA", "AMD", "INTC", "NFLX", "DIS", "CSCO",
+    "PEP", "KO", "CMCSA", "ADBE", "CRM", "NKE", "MRK", "T", "ABT", "XOM",
+    "CVX", "ORCL", "AVGO", "LLY", "MCD", "QCOM", "TXN", "COST", "MDT", "HON"
+]
 
 # --- Parameters ---
 min_pct_change = 1  # Minimum % change after hours to flag
@@ -41,8 +45,7 @@ for ticker in tickers:
         })
 
     except Exception as e:
-        # Skip any tickers with missing data
-        continue
+        continue  # Skip tickers with missing data
 
 # --- Convert to DataFrame & sort ---
 df = pd.DataFrame(results)
