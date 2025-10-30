@@ -49,12 +49,12 @@ def detect_pattern(data):
         highs = data['High'].tail(20)
         lows = data['Low'].tail(20)
         # Double Top
-        if np.isclose(highs.max(), highs.nlargest(2).min(), rtol=0.01):
+        if np.isclose(highs.max(), highs.nlargest(2).iloc[-1], rtol=0.01):
             pattern = "Double Top"
         # Double Bottom
-        elif np.isclose(lows.min(), lows.nsmallest(2).max(), rtol=0.01):
+        elif np.isclose(lows.min(), lows.nsmallest(2).iloc[-1], rtol=0.01):
             pattern = "Double Bottom"
-        # Channel
+        # Channel (optional)
         elif highs.max() - lows.min() > 0:
             pattern = "Channel"
     return pattern
@@ -119,8 +119,8 @@ def analyze_ticker(ticker):
         if pct_change <= -pct_threshold: score -=1; micro_signals.append("After-hours down")
 
         # % bullish / bearish
-        bullish_pct = round((sum([1 for m in micro_signals if "+" in m])/len(micro_signals))*100,1)
-        bearish_pct = round((sum([1 for m in micro_signals if "-" in m])/len(micro_signals))*100,1)
+        bullish_pct = round((sum([1 for m in micro_signals if "+" in m])/len(micro_signals))*100,1) if micro_signals else 0
+        bearish_pct = round((sum([1 for m in micro_signals if "-" in m])/len(micro_signals))*100,1) if micro_signals else 0
 
         # Signal & Recommendation
         if score >= 3:
@@ -136,7 +136,7 @@ def analyze_ticker(ticker):
         return {
             "Ticker": ticker,
             "Price": round(latest_price,2),
-            "Slope": round(slope_val,2),
+            "Slope": round(slope_val,2) if not np.isnan(slope_val) else "-",
             "Volume": "✅ PASS" if volume_pass else "❌ FAIL",
             "After-hours %": round(pct_change,2),
             "RSI": round(rsi_last,2),
