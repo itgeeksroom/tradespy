@@ -48,12 +48,10 @@ def compute_rsi(series, period=14):
 def analyze_ticker(ticker):
     try:
         data = get_data(ticker, period, timeframe)
-        tk = yf.Ticker(ticker)
-        info = tk.info
 
-        latest_price = info.get("postMarketPrice") or info.get("preMarketPrice") or info.get("regularMarketPrice")
-        prev_close = info.get("previousClose")
-        pct_change = float((latest_price - prev_close) / prev_close * 100) if latest_price and prev_close else 0.0
+        latest_price = float(data["Close"].iloc[-1]) if not data.empty else np.nan
+        prev_close = float(data["Close"].iloc[-2]) if len(data) > 1 else latest_price
+        pct_change = ((latest_price - prev_close) / prev_close * 100) if prev_close else 0.0
 
         # Volume check
         avg_volume = float(data["Volume"].mean()) if not data.empty else 0.0
@@ -114,7 +112,7 @@ def analyze_ticker(ticker):
 
         return {
             "Ticker": ticker,
-            "Price": latest_price or "-",
+            "Price": round(latest_price,2) if not np.isnan(latest_price) else "-",
             "Slope": round(slope_val, 2) if not np.isnan(slope_val) else "-",
             "Volume": pf(volume_pass),
             "After-hours %": round(pct_change, 2),
@@ -139,7 +137,7 @@ def analyze_ticker(ticker):
             "Summary": f"Error: {e}"
         }
 
-# --- Session State to preserve results ---
+# --- Session State ---
 if "results" not in st.session_state:
     st.session_state.results = None
 
@@ -149,7 +147,7 @@ if st.button("🔍 Run Scanner"):
         st.session_state.results = [analyze_ticker(t) for t in tickers]
 
 # --- Display Table ---
-if st.session_state.results is not None:
+if st.session_state.results:
     df = pd.DataFrame(st.session_state.results)
     df = df.sort_values("After-hours %", ascending=False).reset_index(drop=True)
     st.dataframe(df, width='stretch', height=600)
@@ -157,52 +155,51 @@ if st.session_state.results is not None:
     # --- Chart ---
     if show_chart:
         selected_ticker = st.selectbox("📈 View chart for:", tickers)
-        if selected_ticker:
-            chart_data = get_data(selected_ticker, period, timeframe)
-            if not chart_data.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(
-                    x=chart_data.index,
-                    open=chart_data['Open'],
-                    high=chart_data['High'],
-                    low=chart_data['Low'],
-                    close=chart_data['Close'],
-                    name='Price'
+        chart_data = get_data(selected_ticker, period, timeframe)
+        if chart_data.empty:
+            st.warning("No chart data available for this ticker/interval.")
+        else:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(
+                x=chart_data.index,
+                open=chart_data['Open'],
+                high=chart_data['High'],
+                low=chart_data['Low'],
+                close=chart_data['Close'],
+                name='Price'
+            ))
+
+            # Use last candle close for marker
+            last_price = chart_data['Close'].iloc[-1]
+            rec = df[df["Ticker"] == selected_ticker]["Recommendation"].values[0]
+
+            if rec == "Buy":
+                fig.add_trace(go.Scatter(
+                    x=[chart_data.index[-1]],
+                    y=[last_price],
+                    mode="markers+text",
+                    marker=dict(color="green", size=15, symbol="triangle-up"),
+                    text=["Buy"],
+                    textposition="top center",
+                    name="Buy Signal"
+                ))
+            elif rec == "Short":
+                fig.add_trace(go.Scatter(
+                    x=[chart_data.index[-1]],
+                    y=[last_price],
+                    mode="markers+text",
+                    marker=dict(color="red", size=15, symbol="triangle-down"),
+                    text=["Short"],
+                    textposition="bottom center",
+                    name="Sell Signal"
                 ))
 
-                # Add Buy/Sell markers
-                row = df[df["Ticker"] == selected_ticker]
-                rec = row["Recommendation"].values[0]
-                price = row["Price"].values[0]
-                if rec == "Buy":
-                    fig.add_trace(go.Scatter(
-                        x=[chart_data.index[-1]],
-                        y=[price],
-                        mode="markers+text",
-                        marker=dict(color="green", size=15, symbol="triangle-up"),
-                        text=["Buy"],
-                        textposition="top center",
-                        name="Buy Signal"
-                    ))
-                elif rec == "Short":
-                    fig.add_trace(go.Scatter(
-                        x=[chart_data.index[-1]],
-                        y=[price],
-                        mode="markers+text",
-                        marker=dict(color="red", size=15, symbol="triangle-down"),
-                        text=["Short"],
-                        textposition="bottom center",
-                        name="Sell Signal"
-                    ))
-
-                fig.update_layout(
-                    title=f"{selected_ticker} Price Chart with Buy/Sell",
-                    yaxis=dict(title='Price'),
-                    height=600,
-                    legend=dict(orientation='h')
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("No chart data available for this ticker.")
+            fig.update_layout(
+                title=f"{selected_ticker} Price Chart with Buy/Sell",
+                yaxis=dict(title='Price'),
+                height=600,
+                legend=dict(orientation='h')
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 st.caption("Built with ❤️ using Streamlit & Yahoo Finance API | Buy/Sell signals shown on chart")
